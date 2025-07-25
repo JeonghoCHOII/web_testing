@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Coupled Oscillator
+</title>
+<style>
+	.canvas {
+		border: 1px solid #000000;
+	}
+	#cvs2 {
+		border: 1px solid #000000;
+	}
+</style>
+</head>
+<body>
+	<div class="controls">
+	    <strong>Initial q₁, q₂:</strong>
+	    <input type="number" id="inputQ1" value="1.57" step="0.1">,
+	    <input type="number" id="inputQ2" value="0" step="0.1">
+	    &nbsp;&nbsp;
+	    <strong>Initial q̇₁, q̇₂:</strong>
+	    <input type="number" id="inputV1" value="0" step="0.1">,
+	    <input type="number" id="inputV2" value="0" step="0.1">
+	    &nbsp;&nbsp;
+	    <strong>Graph Scale:</strong>
+	    <input type="number" id="inputScale" value="100" step="10">
+  	</div>
+	<div class="controls">
+    	<!-- Metric 선택 -->
+    	<strong>Metric:</strong>
+    	<label><input type="radio" name="metric" value="pendulum" checked> Pendulum</label>
+    	<label><input type="radio" name="metric" value="flat"> Flat</label>
+    	<label><input type="radio" name="metric" value="Minkowski"> Minkowski</label>
+  	</div>
+  
+
+	<div class="controls">
+    	<!-- Potential 선택 -->
+    	<strong>Potential:</strong>
+    	<label><input type="radio" name="potential" value="pendulum" checked> Pendulum</label>
+    	<label><input type="radio" name="potential" value="smallangle"> Pendulum(θ≪1)</label>
+    	<label><input type="radio" name="potential" value="oscillator"> Coupled Oscillator</label>
+    	<label><input type="radio" name="potential" value="nearEarth"> Gravity(Near the Earth)</label>
+    	<label><input type="radio" name="potential" value="Central"> Central Force</label>
+    	(Is it gravitation?
+    	<label><input type="radio" name="attraction" value="gravitation" checked> Yes</label>
+    	<label><input type="radio" name="attraction" value="repulsion"> No</label>
+    	)
+    	<label><input type="radio" name="potential" value="free"> Free Body</label>
+    </div>
+    <div class="Buttonie" id="Buttoni">
+		<input type="button" value="Start" onclick="start()">
+		<input type="button" value="Stop" onclick="breaking()">
+	</div>
+  	
+  	<canvas class = "canvas" id = "cvs3" width=600 height=600></canvas>
+
+	<canvas class = "canvas" id = "cvs" width=600 height=600></canvas>
+	
+	<canvas class = "canvas" id = "cvs2" width=600 height=200></canvas>
+
+<script>
+	const canvas = document.getElementById("cvs");
+	const ctx = canvas.getContext("2d");
+	const WIDTH = canvas.width;
+	const HEIGHT = canvas.height;
+
+	const oscillator = document.getElementById("cvs2");
+	const otx = oscillator.getContext("2d");
+	const oWIDTH = oscillator.width;
+	const oHEIGHT = oscillator.height;
+
+	const pendulum = document.getElementById("cvs3");
+	const ptx = pendulum.getContext("2d");
+	const pWIDTH = pendulum.width;
+	const pHEIGHT = pendulum.height;
+	
+	let id = null;
+	//const N = 1024;
+	const dt = 0.001;
+	const dq = 0.0001;
+	let G_SCALE = 100;
+
+	const l1 = 1;			//이중진자에 사용할 실의 길이
+	const l2 = 1;
+	const gravity = 9.8; //중력가속도
+	const P_SCALE = 100;
+
+	const spring1 = 8;
+	const spring2 = 5;		//용수철 상수
+	const K_SCALE = 50;
+
+	//const MASS = [1,1];				// 두 물체의 질량
+	const MASS1 = 1;			//물체 1의 질량 = 기준질량
+	const mu = 1;	//질량비
+
+	let k = -10;			//중심력 계수
+
+	const iniQ = [0,Math.PI];
+	const iniQdot = [0, 0];
+	let Q = [...iniQ];			//일반화위치
+	let Qdot = [...iniQdot];		//일반화속도
+
+	/********이론적 기반************************
+	 * T = 1/2 m g_{ij} q^i q^j : get metric g_{ij} from kinetic energy
+	 * L = T - V : Lagrangian for the generalized coordinate
+	 * q̈^i = Q^i - Γ^{i}_{jk} q̇^j q̇^k - 1/m g^{il} ∂_l V : from Euler-Lagrange Eq.
+	 * and the Γ is Christoffel Symbol.
+	 * 1. get Metric g from T by analytics.
+	 * 2. get Potential in the situation.
+	 * 3. Compute Acceleration q̈ from 1, 2.
+	 * 4. get q̇ and q.
+	 * 시뮬레이션에서 입력해야할 것: metric g_{ij} & Potential Entergy V(q)
+	****************************************/
+
+
+	function getMetric() {
+    	return document.querySelector('input[name="metric"]:checked').value;
+  	}
+  	function getPotential() {
+    	return document.querySelector('input[name="potential"]:checked').value;
+  	}
+	
+	function localMetric(q1, q2) {
+		if (getMetric() === "pendulum") {
+			const g11 = (1 + mu) *l1*l1;
+			const g22 = mu * l2*l2;
+			const g12 = mu*l1*l2*Math.cos(q1-q2);
+			return [g11, g12, g22];
+		} else if (getMetric() === "Minkowski") {
+			const r2 = q1*q1+q2*q2;
+			const rs = 0.1;
+			const f = 1 - rs/Math.sqrt(r2);
+			const g11 = q1*q1/(f*r2) + q2*q2/r2;
+			const g22 = q2*q2/(f*r2) + q1*q1/r2;
+			const g12 = q1*q2*(rs/Math.sqrt(r2))/(f*r2);
+			return [g11, g12, g22];
+		} else {
+			const g11 = 1;
+			const g22 = mu;
+			const g12 = 0;
+			return [g11, g12, g22];
+		}
+		
+	}
+
+	function Potential(q1, q2) {
+
+		if (getPotential() === "pendulum") {
+			const V = MASS1*(1+mu)*gravity*l1*(1-Math.cos(q1)) + MASS1*mu*gravity*l2*(1-Math.cos(q2));
+			return V;
+		} else if (getPotential() === "oscillator") {
+			const V = 0.5 * spring1 * (q1*q1+q2*q2) + 0.5 * spring2 *(q1-q2)*(q1-q2);
+			return V;
+		} else if (getPotential() === "smallangle") {
+			const V = 0.5*MASS1*(1+mu)*gravity*l1*q1*q1 + 0.5*MASS1*mu*gravity*l2*q2*q2;
+			return V;
+		} else if (getPotential() === "Central") {
+			const eps = 0.05;
+			const r = Math.sqrt(q1*q1+q2*q2+eps*eps);
+			const V = k/r;
+			return V;
+		} else if (getPotential() === "nearEarth") {
+			const V = MASS1*gravity*q2;
+			return V;
+		} else { return 0; }
+		
+	}
+
+	function getGradient(q1,q2) {
+		//const V1_p3 = Potential(q1 + 3*dq, q2);
+  		const V1_p2 = Potential(q1 + 2*dq, q2);
+  		const V1_p1 = Potential(q1 +   dq, q2);
+  		const V1_m1 = Potential(q1 -   dq, q2);
+  		const V1_m2 = Potential(q1 - 2*dq, q2);
+  		//const V1_m3 = Potential(q1 - 3*dq, q2);
+
+		//const V2_p3 = Potential(q1, q2 + 3*dq);
+		const V2_p2 = Potential(q1, q2 + 2*dq);
+		const V2_p1 = Potential(q1, q2 +   dq);
+		const V2_m1 = Potential(q1, q2 -   dq);
+		const V2_m2 = Potential(q1, q2 - 2*dq);
+		//const V2_m3 = Potential(q1, q2 - 3*dq);
+
+		const pVp1 = (
+			- V1_p2
+			+ 8*V1_p1
+			- 8*V1_m1
+			+ V1_m2
+			) / (12 * dq);
+
+		const pVp2 = (
+			- V2_p2
+			+ 8*V2_p1
+			- 8*V2_m1
+			+ V2_m2
+			) / (12 * dq);
+		return [pVp1, pVp2];
+	}
+
+	function localGradient(q1,q2) {
+		if (getPotential() === "free") { return [0,0] };
+		// V = 2mgl1(1-cos(t1))+mgl2(1-cos(t2))
+		//const V = (1+mu)*gravity*l1*(1-Math.cos(q1)) + mu*gravity*l2*(1-Math.cos(q2));
+		const [g11, g12, g22] = localMetric(q1,q2);
+		const det = g11*g22-g12*g12;
+		const inv11 = g22/det, inv22 = g11/det, inv12 = -g12/det;
+		//const GRAD1 = (1+mu)*gravity*l1*Math.sin(q1);
+		//const GRAD2 = mu*gravity*l2*Math.sin(q2);
+
+  		const [pVp1, pVp2] = getGradient(q1, q2);
+
+		const GRAD1 = inv11 * pVp1 + inv12 * pVp2;
+		const GRAD2 = inv12 * pVp1 + inv22 * pVp2;
+
+		return [GRAD1, GRAD2];
+	}
+
+	//dg[i][j][k] = g_{ij,k}
+	function localChristoffel(q1,q2) {
+		const dg = [ [ [0,0], [0,0] ], [ [0,0], [0,0] ] ];
+		const inv = [ [0,0], [0,0] ];
+		const [g11, g12, g22] = localMetric(q1,q2);
+		const det = g11*g22-g12*g12;
+
+		inv[0][0] = g22/det;
+		inv[0][1] = -g12/det;
+		inv[1][0] = inv[0][1];
+		inv[1][1] = g11/det;
+
+		const [g11_1m1, g12_1m1, g22_1m1] = localMetric(q1-dq, q2);
+		const [g11_2m1, g12_2m1, g22_2m1] = localMetric(q1, q2-dq);
+
+		const [g11_1p1, g12_1p1, g22_1p1] = localMetric(q1+dq, q2);
+		const [g11_2p1, g12_2p1, g22_2p1] = localMetric(q1, q2+dq);
+
+		const [g11_1m2, g12_1m2, g22_1m2] = localMetric(q1-(2*dq), q2);
+		const [g11_2m2, g12_2m2, g22_2m2] = localMetric(q1, q2-(2*dq));
+
+		const [g11_1p2, g12_1p2, g22_1p2] = localMetric(q1+(2*dq), q2);
+		const [g11_2p2, g12_2p2, g22_2p2] = localMetric(q1, q2+(2*dq));
+
+		/*const [g11_1m3, g12_1m3, g22_1m3] = localMetric(q1-(3*dq), q2);
+		const [g11_2m3, g12_2m3, g22_2m3] = localMetric(q1, q2-(3*dq));
+
+		const [g11_1p3, g12_1p3, g22_1p3] = localMetric(q1+(3*dq), q2);
+		const [g11_2p3, g12_2p3, g22_2p3] = localMetric(q1, q2+(3*dq));*/
+
+		dg[0][0][0] = (	- g11_1p2
+						+ 8*g11_1p1
+						- 8*g11_1m1
+						+ g11_1m2
+						) / (12 * dq);
+		dg[0][0][1] = (	- g11_2p2
+						+ 8*g11_2p1
+						- 8*g11_2m1
+						+ g11_2m2
+						) / (12 * dq);
+
+		dg[0][1][0] = (	- g12_1p2
+						+ 8*g12_1p1
+						- 8*g12_1m1
+						+ g12_1m2
+						) / (12 * dq);
+
+		dg[0][1][1] = (	- g12_2p2
+						+ 8*g12_2p1
+						- 8*g12_2m1
+						+ g12_2m2
+						) / (12 * dq);
+
+		dg[1][0][0] = dg[0][1][0];
+		dg[1][0][1] = dg[0][1][1];
+
+		dg[1][1][0] = (	- g22_1p2
+						+ 8*g22_1p1
+						- 8*g22_1m1
+						+ g22_1m2
+						) / (12 * dq);
+
+		dg[1][1][1] = (	- g22_2p2
+						+ 8*g22_2p1
+						- 8*g22_2m1
+						+ g22_2m2
+						) / (12 * dq);
+
+
+
+		//G^l_ij = 0.5g^{lk}_(g_kj,i+g_ik,j-g_ij,k)
+		const G = [ [ [0,0],[0,0] ], [ [0,0],[0,0] ] ];
+
+		for (let i = 0; i < 2; i++) {
+			for (let j = 0; j < 2; j++) {
+				for (let k = 0; k < 2; k++) {
+					let sum = 0;
+					for (let l = 0; l < 2; l++) {
+						sum += inv[i][l] * (dg[l][j][k] + dg[l][k][j] - dg[j][k][l]);
+					}
+					G[i][j][k] = 0.5 * sum;
+				}
+			}
+		}
+		return G;
+	}
+
+
+	function computeAccelerate(q1, q2, v1, v2) {
+
+		//Equation: q"^i + Γ^i_jk * q'^j * q'^k + g^ik * V^,k / m = 0
+		//𝑞̈ⁱ = −Γⁱⱼₖ 𝑞̇ʲ𝑞̇ᵏ − ∂ⁱV/m
+
+		/**************** 퍼텐셜에 의한 가속도 ****************/
+
+		const [GRAD1, GRAD2] = localGradient(q1, q2);
+		const aV1 = GRAD1 / MASS1;
+		const aV2 = GRAD2 / MASS1;
+
+		/**************** 측지선에 의한 가속도 ****************/
+
+		const G = localChristoffel(q1,q2);
+		const aG1 = (G[0][0][0]*v1*v1+G[0][1][1]*v2*v2+( G[0][0][1] + G[0][1][0])*v1*v2);
+		const aG2 = (G[1][0][0]*v1*v1+G[1][1][1]*v2*v2+( G[1][0][1] + G[1][1][0])*v1*v2);
+
+		/**************** 일반화 힘에 의한 가속도 ****************/
+
+		let aQ1 = 0;
+		let aQ2 = 0;
+
+		const b =0;
+		const sgn1 = (v1 != 0) ? v1/Math.abs(v1) : 0;
+		const sgn2 = (v2 != 0) ? v2/Math.abs(v2) : 0;
+		aQ1 -= b*v1;
+		aQ2 -= b*v2;
+
+		return [ aQ1 - aV1 - aG1, aQ2 - aV2 - aG2];
+	}
+
+	/********* RK4 메소드 구현 *********/
+
+	function f(Y) {
+		const [q1, q2, v1, v2] = Y;
+		const dq1 = v1;
+		const dq2 = v2;
+		const [a1, a2] = computeAccelerate(q1, q2, v1, v2);
+		const dv1 = a1;
+		const dv2 = a2;
+		return [ dq1, dq2, dv1, dv2];
+	}
+
+	function RK4(Y, dt) {
+		const k1 = f(Y);
+
+		const Y2 = Y.map((y, i) => y + (dt * k1[i])/2);
+		const k2 = f(Y2);
+
+		const Y3 = Y.map((y, i) => y + (dt * k2[i])/2);
+		const k3 = f(Y3);
+
+		const Y4 = Y.map((y, i) => y + (dt * k3[i]));
+		const k4 = f(Y4);
+
+		return Y.map((y,i) => y + dt*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i])/6);
+	}
+
+	function RK4Force() {
+		const Y = [Q[0], Q[1], Qdot[0], Qdot[1]];
+		const Ynew = RK4(Y, dt);
+
+		[Q[0], Q[1], Qdot[0], Qdot[1]] = Ynew;
+	}
+
+	/*******************************/
+
+	function Force() {
+		const [q1, q2] = Q;
+		const [v1, v2] = Qdot;
+		const [a1, a2] = computeAccelerate(q1, q2, v1, v2);
+
+		Q[0] += Qdot[0] * dt + 0.5 * a1 * dt*dt;
+		Q[1] += Qdot[1] * dt + 0.5 * a2 * dt*dt;
+
+		const [a1n, a2n] = computeAccelerate(Q[0],Q[1],Qdot[0],Qdot[1]);
+		Qdot[0] += 0.5*(a1+a1n) * dt;
+		Qdot[1] += 0.5*(a2+a2n) * dt;
+		//Q[0] += Qdot[0] * dt;
+		//Q[1] += Qdot[1] * dt;
+	}
+
+	/*******************************/
+
+	function addLine(ctx, WIDTH, HEIGHT){		//각종 축 그리기
+		ctx.strokeStyle = "#000000";
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(0.5*WIDTH,0);
+		ctx.lineTo(0.5*WIDTH,HEIGHT);
+		ctx.stroke();
+		ctx.beginPath();
+		ctx.moveTo(0,0.5*HEIGHT);
+		ctx.lineTo(WIDTH,0.5*HEIGHT);
+		ctx.stroke();
+	}
+
+	// draw contour lines and mapping potential
+
+	//1. Potential 범위 탐색하기
+
+	function getGrid(cols, rows, q1min, q2min, q1max, q2max) {
+		const q1Array = Array.from({length: cols}, (_,i) => 
+			q1min + (q1max - q1min) * ((i + 0.5)/cols)
+			);
+		const q2Array = Array.from({length: rows}, (_,i) =>
+			q2min + (q2max - q2min) * (i / rows)
+			);
+
+		const vGrid = Array(cols).fill().map( () => Array(rows) );
+		let minV = Infinity, maxV = -Infinity;
+		const isCentral = getPotential() === "Central";
+		//const rMask = 0;
+
+		for (let i = 0; i < cols; i++) {
+			for (let j = 0; j < rows; j++) {
+				const q1 = q1Array[i], q2 = q2Array[j];
+				const r = Math.hypot(q1,q2);
+				/*let v;
+				if (isCentral && r < 0.2) {
+					const ratio = rMask/r;
+					v = Potential(q1*ratio,q2*ratio);
+				} else {
+					v = Potential(q1,q2);
+				}*/
+				const v = Potential(q1,q2);
+				vGrid[i][j] = v;
+				if (v < minV) minV = v;
+				if (v > maxV) maxV = v;
+			}
+		}
+		return { cols, rows, q1Array, q2Array, vGrid, minV, maxV };
+	}
+
+	/*function Mapper(grid) {
+
+		const { cols, rows, q1Array, q2Array, vGrid, minV, maxV } = grid;
+
+		const pxW = WIDTH / cols, pxH = HEIGHT / rows;
+
+		for (let i = 0; i < cols; i++) {
+			const px = WIDTH/2 + G_SCALE * q1Array[i];
+			for (let j = 0; j < rows; j++) {
+				const py = HEIGHT/2 - G_SCALE * q2Array[j];
+
+				const v = vGrid[i][j];
+				const t = (v - minV) / (maxV - minV);
+
+				const light = 40 + t * 50;
+
+				ctx.fillStyle = `hsl(30,100%,${light}%)`;
+				ctx.fillRect(px - pxW/2-2, py - pxH/2-2, pxW+4, pxH+4);
+			}
+		}
+	}
+
+	function Contour(grid) {
+
+		const { cols, rows, q1Array, q2Array, vGrid, minV, maxV } = grid;
+
+		let nlevels = 8;	//등고선 수
+		const isCentral = getPotential() === "Central";
+		if (isCentral) nlevels = 16;
+
+		const levels = Array.from({ length: nlevels }, (_, k) =>
+			minV + (maxV - minV) * (k / 8)
+		);
+		//point 샘플링 시 허용오차 셋팅
+		const eps = (maxV - minV) / (nlevels * 64);
+
+		//점의 크기
+		const pxW = WIDTH / cols, pxH = HEIGHT / rows;
+
+		const TYPE = getPotential();
+
+		levels.forEach((level) => {
+			for (let i = 0; i < cols; i++) {
+				const px = WIDTH/2 + G_SCALE * q1Array[i];
+
+				for (let j = 0; j < rows; j++) {
+					const py = HEIGHT/2 - G_SCALE * q2Array[j];
+
+
+					let vv = vGrid[i][j];
+					if (vv === Infinity) v = minV;
+					if(Math.abs(vv-level+1) < eps) {
+						ctx.fillStyle = "#000000";
+						ctx.fillRect(px,py,pxW,pxH);
+					}
+				}
+			}
+		});
+	}*/
+
+	function MapAndContour(grid) {
+
+		const { cols, rows, q1Array, q2Array, vGrid, minV, maxV } = grid;
+
+		let nlevels = 9;	//등고선 수
+		const isCentral = getPotential() === "Central";
+		if (isCentral) nlevels = 16;
+
+		const levels = Array.from({ length: nlevels }, (_, k) =>
+			minV + (maxV - minV) * (k / nlevels)
+		);
+		//point 샘플링 시 허용오차 셋팅
+		const eps = (maxV - minV) / (nlevels * 64);
+
+		//점의 크기
+		const pxW = WIDTH / cols, pxH = HEIGHT / rows;
+
+		//const TYPE = getPotential();		
+
+		for (let i = 0; i < cols; i++) {
+			const px = WIDTH/2 + G_SCALE * q1Array[i];
+
+			for (let j = 0; j < rows; j++) {
+
+				const py = HEIGHT/2 - G_SCALE * q2Array[j];
+
+				const v = vGrid[i][j];
+				//if (v === Infinity) v = minV;
+				
+
+				let isContour = false;
+				for (let k = 1; k < levels.length; k++) {
+					if(Math.abs(v - levels[k]) < eps) {
+						isContour = true;
+						break;
+					}
+				}
+
+				let spread;
+				if (isContour) {
+					ctx.fillStyle = `rgb(0,0,0)`;
+				} else {
+					const t = (v - minV) / (maxV - minV);
+					const light = 30 + t * 60;
+					ctx.fillStyle = `hsl(30,100%,${light}%)`;
+				}
+
+				const rx = Math.round(px - pxW/2 - 0.1);
+				const ry = Math.round(py - pxH/2 - 0.1);
+				ctx.fillRect(rx, ry, pxW, pxH);
+			}
+
+		}
+	}
+
+
+	function drawSpace() {
+		ctx.clearRect(0,0,WIDTH,HEIGHT);
+		const isFree = getPotential() === "free";
+
+		if (!isFree) {
+			const q1min = -WIDTH/(2*G_SCALE), q1max = WIDTH/(2*G_SCALE);
+			const q2min = -HEIGHT/(2*G_SCALE), q2max = HEIGHT/(2*G_SCALE);
+
+			const grid = getGrid(600, 600, q1min, q2min, q1max, q2max);
+			MapAndContour(grid);
+		}
+	}
+
+	function axisName() {
+		// 축 이름
+    	ctx.font = "20px Arial";
+    	ctx.fillStyle = "#000";
+    	ctx.textAlign = "center";
+    	ctx.textBaseline = "middle";
+    	// x축 레이블 (아래쪽 중앙)
+    	ctx.fillText("q1", WIDTH - 30, 0.5 * HEIGHT + 20);
+    	// y축 레이블 (왼쪽 위쪽 중앙에 회전하여)
+    	ctx.save();
+    	ctx.translate(0.5 * WIDTH - 20, 30);
+    	ctx.rotate(-Math.PI / 2);
+    	ctx.fillText("q2", 0, 0);
+    	ctx.restore();
+	}
+
+	function drawG(prevQ1, prevQ2){
+		/*ctx.beginPath();
+		ctx.fillStyle = '#000000';
+		ctx.arc(G_SCALE*Q[0]+WIDTH/2, HEIGHT/2-G_SCALE*Q[1], 3*G_SCALE/100, 0, 2*Math.PI, false);
+		ctx.fill();*/
+
+		ctx.beginPath();
+    	ctx.strokeStyle = '#000000';
+    	ctx.lineWidth = 6*Math.log10(G_SCALE)/2;
+    	ctx.moveTo(G_SCALE*prevQ1+WIDTH/2, HEIGHT/2-G_SCALE*prevQ2);
+    	ctx.lineTo(G_SCALE*Q[0]+WIDTH/2, HEIGHT/2-G_SCALE*Q[1]);
+    	ctx.stroke();
+		
+	}
+
+
+	function drawOscillator() {
+		otx.clearRect(0,0,oWIDTH,oHEIGHT);
+		otx.beginPath();
+		otx.moveTo(0,0.5*oHEIGHT);
+		otx.lineTo(oWIDTH,0.5*oHEIGHT);
+		otx.stroke();
+
+		otx.beginPath();
+		otx.fillStyle = '#000000';
+		otx.arc(K_SCALE*Q[0]+0.333*oWIDTH, 0.5*oHEIGHT, 10, 0, 2*Math.PI, false);
+		otx.fill();
+		otx.beginPath();
+		otx.fillStyle = '#000000';
+		otx.arc(K_SCALE*Q[1]+0.667*oWIDTH, 0.5*oHEIGHT, 10, 0, 2*Math.PI, false);
+		otx.fill();
+	}
+
+	function drawPendulum() {
+		ptx.clearRect(0,0,pWIDTH,pHEIGHT);
+		addLine(ptx, pWIDTH,pHEIGHT);
+		const pivotX = pWIDTH/2;
+		const pivotY = pHEIGHT/2;
+
+		const theta1 = Q[0];
+		const theta2 = Q[1];
+		const r1 = l1 * P_SCALE;
+		const r2 = l2 * P_SCALE;
+
+		const x1 = pivotX + r1 * Math.sin(theta1);
+		const y1 = pivotY + r1 * Math.cos(theta1);
+
+		const x2 = x1 + r2 * Math.sin(theta2);
+		const y2 = y1 + r2 * Math.cos(theta2);
+
+		ptx.strokeStyle = "#000000";
+		ptx.lineWidth = 2;
+		ptx.beginPath();
+		ptx.moveTo(pivotX,pivotY);
+		ptx.lineTo(x1,y1);
+		ptx.lineTo(x2,y2);
+		ptx.stroke();
+
+		ptx.fillStyle = "#000000";
+		ptx.beginPath();
+		ptx.arc(x1,y1,10,0,2*Math.PI,false);
+		ptx.fill();
+
+		ptx.fillStyle = "#000000";
+		ptx.beginPath();
+		ptx.arc(x2,y2,10,0,2*Math.PI,false);
+		ptx.fill();
+	}
+
+	function computeEnergy(q1,q2,v1,v2) {
+	  // 1) 운동에너지 T = 1/2 g_ij v^i v^j
+	  const [g11, g12, g22] = localMetric(q1,q2);
+	  const T = 0.5 * ( g11*v1*v1 + 2*g12*v1*v2 + g22*v2*v2 );
+	  // 2) 퍼텐셜 에너지 V(q)
+	  const V = Potential(q1,q2);
+	  return T + V;
+	}
+	let Energy = 0;
+
+	/**시작버튼을 눌렀을 때 수행할 동작*/
+	function start() {
+
+		Q      = [ parseFloat(document.getElementById("inputQ1").value),
+					parseFloat(document.getElementById("inputQ2").value) ];
+    	Qdot   = [ parseFloat(document.getElementById("inputV1").value),
+    				parseFloat(document.getElementById("inputV2").value) ];
+    	G_SCALE = parseFloat(document.getElementById("inputScale").value);
+
+    	E = computeEnergy(Q[0],Q[1],Qdot[0],Qdot[1]);
+    	console.log(E);
+
+
+		ctx.clearRect(0,0,WIDTH,HEIGHT);
+    	//mapAxis();
+    	//mapPotential();
+    	//mapMetric();
+    	//mapChristoffel();
+    	//drawMapping();
+    	//drawDotContours();
+    	drawSpace();
+    	addLine(ctx, WIDTH, HEIGHT);
+    	axisName();
+    	cancelAnimationFrame(id);  // 혹시 돌고 있으면 멈추고
+    	animate();                     // 애니메이션 시작
+  	}
+
+  	function animate() {
+   	 	// 1) 화면 초기화
+    	//ctx.clearRect(0, 0, WIDTH, HEIGHT);
+    	//addLine();
+
+    	// 2) 물리 업데이트 및 그리기
+    	const prevQ1 = Q[0];
+    	const prevQ2 = Q[1];
+    	//console.log(prevQ1, prevQ2);
+
+    	for (let i = 0; i < 32; i++){RK4Force();}
+    	const epsilon = Math.abs(computeEnergy(Q[0],Q[1],Qdot[0],Qdot[1])-E)/E;
+    	console.log(Math.log10(epsilon));
+
+    	drawG(prevQ1,prevQ2);
+
+    	drawOscillator();
+    	drawPendulum();
+
+    	// 3) 다음 프레임 예약
+    	id = requestAnimationFrame(animate);
+  	}
+
+  	function breaking() {
+    	// 애니메이션 중단
+    	if (id !== null) {
+    		cancelAnimationFrame(id);
+    		id = null;
+    	}
+    	Q = [...iniQ];
+    	Qdot = [...iniQdot];
+  	}
+
+  	document.querySelectorAll('input[name="potential"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        drawSpace();
+    	addLine(ctx, WIDTH, HEIGHT);
+    	axisName();
+      });
+    });
+    document.querySelectorAll('input[name="attraction"]').forEach(radio => {
+    	radio.addEventListener('change', e => {
+    		const v = e.target.value;
+	      	k = (v === "repulsion") ? 10 : -10;
+	        drawSpace();
+			addLine(ctx, WIDTH, HEIGHT);
+			axisName();
+    	});
+    });
+
+</script>
+
+</body>
+</html>
